@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Raspberry Pi Object Detection</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            width: 100%;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .content {
+            display: flex;
+            width: 100%;
+            gap: 20px;
+        }
+        .video-container {
+            flex: 1;
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        .detections-container {
+            flex: 1;
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            max-height: 480px;
+            overflow-y: auto;
+        }
+        img {
+            width: 100%;
+            border-radius: 4px;
+        }
+        h1 {
+            color: #333;
+        }
+        h2 {
+            color: #555;
+            margin-top: 0;
+        }
+        .detection-item {
+            padding: 10px;
+            margin-bottom: 8px;
+            background-color: #f0f0f0;
+            border-left: 4px solid #2196F3;
+            border-radius: 4px;
+        }
+        .stats {
+            margin-top: 20px;
+            width: 100%;
+            display: flex;
+            justify-content: space-around;
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        .stat-item {
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2196F3;
+        }
+        .stat-label {
+            color: #777;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Raspberry Pi Object Detection</h1>
+        </div>
+        
+        <div class="content">
+            <div class="video-container">
+                <h2>Live Video Feed</h2>
+                <img src="{{ url_for('video_feed') }}" alt="Video Feed">
+            </div>
+            
+            <div class="detections-container">
+                <h2>Detection Results</h2>
+                <div id="detections-list">
+                    <div class="detection-item">Waiting for detections...</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-item">
+                <div class="stat-value" id="detection-count">0</div>
+                <div class="stat-label">Objects Detected</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="fps">0</div>
+                <div class="stat-label">FPS</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="top-class">None</div>
+                <div class="stat-label">Most Common Object</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Update detections every 200ms
+        let lastUpdate = Date.now();
+        let frameCount = 0;
+        
+        // Object counter for statistics
+        let objectCounts = {};
+        
+        function updateDetections() {
+            fetch('/latest_detections')
+                .then(response => response.json())
+                .then(data => {
+                    const detectionsContainer = document.getElementById('detections-list');
+                    
+                    // Clear previous detections
+                    detectionsContainer.innerHTML = '';
+                    
+                    // Reset object counts for this frame
+                    objectCounts = {};
+                    
+                    // Display each detection
+                    data.forEach(detection => {
+                        const detectionElement = document.createElement('div');
+                        detectionElement.className = 'detection-item';
+                        detectionElement.innerHTML = `
+                            <strong>${detection.label}</strong> (${(detection.confidence * 100).toFixed(1)}%)<br>
+                            Position: (${detection.bbox[0]}, ${detection.bbox[1]}) to (${detection.bbox[2]}, ${detection.bbox[3]})
+                        `;
+                        detectionsContainer.appendChild(detectionElement);
+                        
+                        // Update object counts
+                        if (objectCounts[detection.label]) {
+                            objectCounts[detection.label]++;
+                        } else {
+                            objectCounts[detection.label] = 1;
+                        }
+                    });
+                    
+                    if (data.length === 0) {
+                        const noDetectionsElement = document.createElement('div');
+                        noDetectionsElement.className = 'detection-item';
+                        noDetectionsElement.textContent = 'No objects detected';
+                        detectionsContainer.appendChild(noDetectionsElement);
+                    }
+                    
+                    // Update stats
+                    document.getElementById('detection-count').textContent = data.length;
+                    
+                    // Find most common object
+                    let topClass = 'None';
+                    let topCount = 0;
+                    for (const [label, count] of Object.entries(objectCounts)) {
+                        if (count > topCount) {
+                            topCount = count;
+                            topClass = label;
+                        }
+                    }
+                    document.getElementById('top-class').textContent = topClass;
+                    
+                    // Calculate FPS
+                    frameCount++;
+                    const now = Date.now();
+                    const elapsed = now - lastUpdate;
+                    if (elapsed >= 1000) { // Update FPS every second
+                        const fps = (frameCount / (elapsed / 1000)).toFixed(1);
+                        document.getElementById('fps').textContent = fps;
+                        frameCount = 0;
+                        lastUpdate = now;
+                    }
+                })
+                .catch(error => console.error('Error fetching detections:', error));
+        }
+        
+        // Update initially and then periodically
+        updateDetections();
+        setInterval(updateDetections, 200);
+    </script>
+</body>
+</html>

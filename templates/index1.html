@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Raspberry Pi Object Detection System</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        .video-container {
+            flex: 1;
+            min-width: 640px;
+            background-color: #000;
+            position: relative;
+        }
+        #videoFeed {
+            width: 100%;
+            height: auto;
+        }
+        .click-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+        }
+        .control-panel {
+            flex: 1;
+            min-width: 300px;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .panel-section {
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        h2 {
+            margin-top: 0;
+            color: #333;
+        }
+        .detections-list {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin-bottom: 15px;
+            background-color: #f9f9f9;
+        }
+        .detection-item {
+            padding: 5px;
+            margin-bottom: 5px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+        }
+        .detection-item:hover {
+            background-color: #e9e9e9;
+        }
+        .selected {
+            background-color: #d4edda;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .coords-display {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+        .status {
+            padding: 10px;
+            margin-top: 10px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+        }
+        .status-success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status-error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .arm-controls {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .control-btn {
+            padding: 15px;
+            text-align: center;
+        }
+        #up {
+            grid-column: 2;
+            grid-row: 1;
+        }
+        #left {
+            grid-column: 1;
+            grid-row: 2;
+        }
+        #center {
+            grid-column: 2;
+            grid-row: 2;
+            background-color: #6c757d;
+        }
+        #right {
+            grid-column: 3;
+            grid-row: 2;
+        }
+        #down {
+            grid-column: 2;
+            grid-row: 3;
+        }
+    </style>
+</head>
+<body>
+    <h1>Raspberry Pi Object Detection System</h1>
+    <div class="container">
+        <div class="video-container">
+            <img id="videoFeed" src="/video_feed" alt="Video Stream">
+            <div class="click-overlay" id="clickOverlay"></div>
+        </div>
+        <div class="control-panel">
+            <div class="panel-section">
+                <h2>Object Detections</h2>
+                <div id="detectionsList" class="detections-list">
+                    <div>Waiting for detections...</div>
+                </div>
+                <div class="button-group">
+                    <button id="selectObjectBtn" disabled>Select Object</button>
+                    <button id="focusObjectBtn" disabled>Focus on Object</button>
+                </div>
+            </div>
+            <div class="panel-section">
+                <h2>Object Position</h2>
+                <div id="objectCoords" class="coords-display">X: ---, Y: ---</div>
+                <div class="button-group">
+                    <button id="sendCoordsBtn" disabled>Send Coordinates to Arm</button>
+                    <button id="grabObjectBtn" disabled>Grab Object</button>
+                </div>
+            </div>
+            <div class="panel-section">
+                <h2>Arm Control</h2>
+                <div class="arm-controls">
+                    <button id="up" class="control-btn">Up</button>
+                    <button id="left" class="control-btn">Left</button>
+                    <button id="center" class="control-btn">Center</button>
+                    <button id="right" class="control-btn">Right</button>
+                    <button id="down" class="control-btn">Down</button>
+                </div>
+                <div class="button-group">
+                    <button id="gripperOpenBtn">Open Gripper</button>
+                    <button id="gripperCloseBtn">Close Gripper</button>
+                    <button id="homeBtn">Home Position</button>
+                </div>
+            </div>
+            <div class="panel-section">
+                <h2>Status</h2>
+                <div id="statusMessage" class="status">System ready</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Variables
+            let selectedDetection = null;
+            let detections = [];
+            let selectedCoords = { x: null, y: null };
+            let videoRect = null;
+            
+            // Elements
+            const detectionsList = document.getElementById('detectionsList');
+            const objectCoords = document.getElementById('objectCoords');
+            const selectObjectBtn = document.getElementById('selectObjectBtn');
+            const focusObjectBtn = document.getElementById('focusObjectBtn');
+            const sendCoordsBtn = document.getElementById('sendCoordsBtn');
+            const grabObjectBtn = document.getElementById('grabObjectBtn');
+            const statusMessage = document.getElementById('statusMessage');
+            const clickOverlay = document.getElementById('clickOverlay');
+            const videoFeed = document.getElementById('videoFeed');
+            
+            // Get video dimensions
+            videoFeed.onload = function() {
+                videoRect = videoFeed.getBoundingClientRect();
+            };
+            
+            // Control buttons
+            const armButtons = {
+                up: document.getElementById('up'),
+                left: document.getElementById('left'),
+                center: document.getElementById('center'),
+                right: document.getElementById('right'),
+                down: document.getElementById('down'),
+                gripperOpen: document.getElementById('gripperOpenBtn'),
+                gripperClose: document.getElementById('gripperCloseBtn'),
+                home: document.getElementById('homeBtn')
+            };
+            
+            // Fetch detections periodically
+            function fetchDetections() {
+                fetch('/latest_detections')
+                    .then(response => response.json())
+                    .then(data => {
+                        detections = data;
+                        updateDetectionsList();
+                        if (detections.length > 0) {
+                            selectObjectBtn.disabled = false;
+                        } else {
+                            selectObjectBtn.disabled = true;
+                            focusObjectBtn.disabled = true;
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error fetching detections:', error);
+                        updateStatus('Error fetching detections', true);
+                    });
+            }
+            
+            // Update detections list UI
+            function updateDetectionsList() {
+                if (detections.length === 0) {
+                    detectionsList.innerHTML = '<div>No objects detected</div>';
+                    return;
+                }
+                
+                let html = '';
+                detections.forEach((detection, index) => {
+                    const isSelected = selectedDetection === index;
+                    html += `<div class="detection-item ${isSelected ? 'selected' : ''}" 
+                                data-index="${index}">
+                                ${detection.label} (${(detection.confidence * 100).toFixed(1)}%) - 
+                                Position: [${getCenterX(detection.bbox)}, ${getCenterY(detection.bbox)}]
+                            </div>`;
+                });
+                detectionsList.innerHTML = html;
+                
+                // Add click handlers
+                document.querySelectorAll('.detection-item').forEach(item => {
+                    item.addEventListener('click', function() {
+                        const index = parseInt(this.getAttribute('data-index'));
+                        selectDetection(index);
+                    });
+                });
+            }
+            
+            // Select a detection
+            function selectDetection(index) {
+                selectedDetection = index;
+                const detection = detections[index];
+                updateDetectionsList();
+                
+                // Calculate center coordinates
+                const centerX = getCenterX(detection.bbox);
+                const centerY = getCenterY(detection.bbox);
+                selectedCoords = { x: centerX, y: centerY };
+                
+                // Update UI
+                objectCoords.textContent = `X: ${centerX}, Y: ${centerY}`;
+                focusObjectBtn.disabled = false;
+                sendCoordsBtn.disabled = false;
+                grabObjectBtn.disabled = false;
+                
+                updateStatus(`Selected: ${detection.label}`);
+            }
+            
+            // Calculate center X of bounding box
+            function getCenterX(bbox) {
+                return Math.round((bbox[0] + bbox[2]) / 2);
+            }
+            
+            // Calculate center Y of bounding box
+            function getCenterY(bbox) {
+                return Math.round((bbox[1] + bbox[3]) / 2);
+            }
+            
+            // Update status message
+            function updateStatus(message, isError = false) {
+                statusMessage.textContent = message;
+                statusMessage.className = 'status ' + (isError ? 'status-error' : 'status-success');
+                setTimeout(() => {
+                    statusMessage.className = 'status';
+                }, 3000);
+            }
+            
+            // Send command to arm API
+            function sendArmCommand(command, params = {}) {
+                const data = {
+                    command: command,
+                    ...params
+                };
+                
+                fetch('/arm_control', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                })
+                .then(response => response.json())
+                .then(result => {
+                    if (result.success) {
+                        updateStatus(`Command "${command}" sent successfully`);
+                    } else {
+                        updateStatus(`Error: ${result.error}`, true);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error sending command:', error);
+                    updateStatus('Network error sending command', true);
+                });
+            }
+            
+            // Event listeners for buttons
+            selectObjectBtn.addEventListener('click', function() {
+                if (detections.length > 0 && selectedDetection === null) {
+                    selectDetection(0);
+                }
+            });
+            
+            focusObjectBtn.addEventListener('click', function() {
+                if (selectedDetection !== null) {
+                    const detection = detections[selectedDetection];
+                    sendArmCommand('focus', { 
+                        x: getCenterX(detection.bbox),
+                        y: getCenterY(detection.bbox),
+                        label: detection.label
+                    });
+                }
+            });
+            
+            sendCoordsBtn.addEventListener('click', function() {
+                if (selectedCoords.x !== null && selectedCoords.y !== null) {
+                    sendArmCommand('move_to', { 
+                        x: selectedCoords.x,
+                        y: selectedCoords.y
+                    });
+                }
+            });
+            
+            grabObjectBtn.addEventListener('click', function() {
+                if (selectedDetection !== null) {
+                    const detection = detections[selectedDetection];
+                    sendArmCommand('grab', { 
+                        x: getCenterX(detection.bbox),
+                        y: getCenterY(detection.bbox),
+                        label: detection.label
+                    });
+                }
+            });
+            
+            // Click on video to select coordinates
+            clickOverlay.addEventListener('click', function(e) {
+                if (!videoRect) {
+                    videoRect = videoFeed.getBoundingClientRect();
+                }
+                
+                // Calculate relative position in the video
+                const relX = e.clientX - videoRect.left;
+                const relY = e.clientY - videoRect.top;
+                
+                // Calculate scaled coordinates for the actual frame
+                const scaleX = videoFeed.naturalWidth / videoRect.width;
+                const scaleY = videoFeed.naturalHeight / videoRect.height;
+                
+                const frameX = Math.round(relX * scaleX);
+                const frameY = Math.round(relY * scaleY);
+                
+                // Update selected coordinates
+                selectedCoords = { x: frameX, y: frameY };
+                objectCoords.textContent = `X: ${frameX}, Y: ${frameY}`;
+                sendCoordsBtn.disabled = false;
+                
+                updateStatus(`Selected position: (${frameX}, ${frameY})`);
+            });
+            
+            // Arm control buttons
+            Object.entries(armButtons).forEach(([direction, button]) => {
+                button.addEventListener('click', function() {
+                    sendArmCommand(direction);
+                });
+            });
+            
+            // Start periodic updates
+            fetchDetections();
+            setInterval(fetchDetections, 1000);
+        });
+    </script>
+</body>
+</html>
